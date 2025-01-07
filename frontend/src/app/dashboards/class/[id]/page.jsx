@@ -94,25 +94,23 @@ const ClassDetail = () => {
   
       if (uploadError) throw uploadError;
   
-      // Process with ChromaDB
+      // Process with RAG
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('class_id', params.id); 
+      formData.append('is_teacher', 'true');
   
-      const processResponse = await fetch('http://localhost:8000/process-pdf', {
+      const processResponse = await fetch('http://localhost:8000/process-file', {
         method: 'POST',
         body: formData,
       });
   
       if (!processResponse.ok) {
-        // Rollback storage upload if processing fails
         await supabase.storage
           .from('teacher-resources')
           .remove([`${params.id}/${file.name}`]);
         throw new Error('Failed to process PDF');
       }
   
-      // Refresh file list
       const { data: files } = await supabase.storage
         .from('teacher-resources')
         .list(params.id);
@@ -122,7 +120,6 @@ const ClassDetail = () => {
     } catch (err) {
       console.error('Upload error:', err);
       setError(err.message);
-      event.target.value = '';
     } finally {
       setUploadingTeacher(false);
     }
@@ -145,18 +142,16 @@ const ClassDetail = () => {
   
       if (uploadError) throw uploadError;
   
-      // Update database record
-      const { error: dbError } = await supabase
-        .from('student_submissions')
-        .insert({
-          class_id: params.id,
-          file_name: file.name,
-          file_path: uploadData.path
-        });
+      // Process file without RAG
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('is_teacher', 'false');
   
-      if (dbError) throw dbError;
+      await fetch('http://localhost:8000/process-file', {
+        method: 'POST',
+        body: formData,
+      });
   
-      // Refresh file list
       const { data: files } = await supabase.storage
         .from('student-submissions')
         .list(params.id);
