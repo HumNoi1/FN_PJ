@@ -156,6 +156,72 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+class CompareRequest(BaseModel):
+    teacher_file: str
+    student_file: str
+    question: str | None = None
+    custom_prompt: str | None = None
+
+@app.post("/compare-pdfs")
+async def compare_pdfs(request: CompareRequest):
+    try:
+        # Query ChromaDB for both files
+        teacher_results = collection.get(
+            where={"file_name": request.teacher_file},
+            limit=10
+        )
+        
+        # Read and process student file
+        student_content = await process_student_file(request.student_file)
+        
+        # Create comparison prompt
+        context = "\n\n".join(teacher_results['documents'])
+        
+        default_prompt = f"""
+        Compare the following teaching material with the student submission:
+
+        Teaching Material:
+        {context}
+
+        Student Submission:
+        {student_content}
+
+        Analyze:
+        1. Key concepts covered correctly
+        2. Missing or incorrect information
+        3. Areas needing improvement
+        4. Overall assessment
+
+        If a specific question is provided, focus on that aspect:
+        {request.question if request.question else 'Provide general comparison'}
+        """
+
+        prompt = request.custom_prompt if request.custom_prompt else default_prompt
+        
+        response = llm(prompt)
+        return {"comparison": response.strip()}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def process_student_file(filename: str):
+    try:
+        # Get student file from storage
+        student_pdf = await get_file_from_storage(filename)
+        pdf_reader = pypdf.PdfReader(BytesIO(student_pdf))
+        
+        text_content = ""
+        for page in pdf_reader.pages:
+            text_content += page.extract_text()
+            
+        return text_content
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing student file: {str(e)}"
+        )
 
 if __name__ == "__main__":
     import uvicorn

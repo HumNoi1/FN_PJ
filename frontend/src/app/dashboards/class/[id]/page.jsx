@@ -8,6 +8,8 @@ import supabase from '@/lib/supabase';
 import { useParams } from 'next/navigation';
 
 const ClassDetail = () => {
+
+  // State variables
   const params = useParams();
   const [classData, setClassData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -16,6 +18,12 @@ const ClassDetail = () => {
   const [studentFiles, setStudentFiles] = useState([]);
   const [uploadingTeacher, setUploadingTeacher] = useState(false);
   const [uploadingStudent, setUploadingStudent] = useState(false);
+
+  // Function for Compare PDF
+  const [selectedTeacherFile, setSelectedTeacherFile] = useState(null);
+  const [selectedStudentFile, setSelectStudentFile] = useState(null);
+  const [comparisonResult, setComparisonResult] = useState('');
+  const [isComparing, setIsComparing] = useState(false);
   
   // Function for RAG and Chat
   const [selectedFile, setSelectedFile] = useState(null);
@@ -295,6 +303,44 @@ const ClassDetail = () => {
     }
   };
 
+  const handleComapre = async () => {
+    if (!selectedTeacherFile || !selectedStudentFile) {
+      setError('Please select both teacher and student files');
+      return;
+    }
+
+    try {
+      setIsComparing(true);
+      setError(null);
+
+      const response = await fetch('http://localhost:8000/compare-pdfs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          teacher_file: selectedTeacherFile.name,
+          student_file: selectedStudentFile.name,
+          question: question.trim() || null,
+          custom_prompt: customPrompt.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to compare files');
+      }
+
+      const data = await response.json();
+      setComparisonResult(data.comparison);
+    } catch (err) {
+      console.error('Error comparing files:', err);
+      setError(err.message || 'Failed to compare files');
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
   if (loading) return (
     <div className="flex">
       <Nav />
@@ -527,6 +573,40 @@ const ClassDetail = () => {
 
             </section>
           )}
+
+        {/* Comparison Section */}
+        {selectedTeacherFile && selectedStudentFile && (
+          <section className="lg:col-span-12 bg-slate-800 rounded-xl p-6 shadow-lg">
+            <h3 className="text-xl font-bold text-whit mb-6">
+              Compare Files
+            </h3>
+
+            <div className="flex items-center gap-4 mb-4">
+              <span className="text-slate-300">
+                Comparing: {selectedTeacherFile.name} ↔ {selectedStudentFile.name}
+              </span>
+            </div>
+
+            <button
+              onClick={handleComapre}
+              disabled={isComparing}
+              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+            >
+              {isComparing ? 'Comparing...' : 'Compare Files'}
+            </button>
+
+            {comparisonResult && (
+              <div className="mt-6 p-6 bg-slate-700 rounded-lg">
+                <h4 className="text-sm font-medium text-slate-300 mb-3">
+                  Comparison Result
+                </h4>
+                <div className="text-white whitespace-pre-wrap">
+                  {comparisonResult}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         </div>
 
