@@ -48,7 +48,7 @@ const ClassDetail = () => {
         if (classError) throw classError;
         setClassData(classDetails);
 
-        // ดึงข้อมูลไฟล์ที่อัพโหลดแล้ว
+        // Fetch teacher and student files uploads
         const { data: teacherData, error: teacherError } = await supabase
           .storage
           .from('teacher-resources')
