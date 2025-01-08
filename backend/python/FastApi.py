@@ -5,11 +5,17 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.callbacks.manager import CallbackManager
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-import chromadb
-from chromadb.config import Settings
+from pymilvus import (
+    connections,
+    utility,
+    Collection,
+    FieldSchema,
+    CollectionSchema,
+    DataType
+)
 import pypdf
 import os
-from typing import Dict
+from typing import Dict, List
 from io import BytesIO
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -20,7 +26,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file_
 # Initialize FastAPI
 app = FastAPI()
 
-# CORS
+# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,16 +35,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize ChromaDB
-chroma_client = chromadb.PersistentClient(path="chroma_db")
-
-# Create or get collection
-collection = chroma_client.get_or_create_collection(
-    name="documents",
-    metadata={"hnsw:space": "cosine"}
+# Connect to Milvus
+connections.connect(
+    alias="default",
+    host=os.getenv("MILVUS_HOST", "localhost"),
+    port=os.getenv("MILVUS_PORT", "19530")
 )
 
-# LLM
+# Define collection schema
+dim = 384  # Dimension for all-MiniLM-L6-v2 embeddings
+collection_name = "documents"
+
+def create_collection():
+    """Create Milvus collection if it doesn't exist"""
+    if utility.has_collection(collection_name):
+        return Collection(collection_name)
+
+    fields = [
+        FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=100, is_primary=True),
+        FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=200),
+        FieldSchema(name="chunk_index", dtype=DataType.INT64),
+        FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=10000),
+        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim)
+    ]
+    schema = CollectionSchema(fields=fields, description="Document collection")
+    collection = Collection(name=collection_name, schema=schema)
+    
+    # Create index for vector field
+    index_params = {
+        "metric_type": "COSINE",
+        "index_type": "IVF_FLAT",
+        "params": {"nlist": 128}
+    }
+    collection.create_index(field_name="embedding", index_params=index_params)
+    return collection
+
+# Initialize collection
+collection = create_collection()
+
+# Initialize LLM
 callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
 llm = LlamaCpp(
     model_path="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
@@ -50,9 +85,9 @@ llm = LlamaCpp(
     verbose=True,
 )
 
-# Embeddings
+# Initialize embeddings
 embeddings = HuggingFaceEmbeddings(
-    model_name="intfloat/multilingual-e5-large",
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
     model_kwargs={'device': 'cuda'}
 )
 
@@ -64,12 +99,13 @@ class QueryRequest(BaseModel):
 @app.get("/status/{filename}")
 async def check_file_status(filename: str):
     try:
-        results = collection.get(
-            where={"file_name": filename},
+        collection.load()
+        results = collection.query(
+            expr=f'file_name == "{filename}"',
             limit=1
         )
         return {
-            "is_processed": len(results['ids']) > 0,
+            "is_processed": len(results) > 0,
             "filename": filename
         }
     except Exception as e:
@@ -95,20 +131,28 @@ async def process_pdf(file: UploadFile):
         )
         chunks = text_splitter.split_text(text_content)
 
-        # Process chunks and store in ChromaDB
+        # Process chunks and store in Milvus
+        collection.load()
+        data_to_insert = []
+        
         for i, chunk in enumerate(chunks):
             chunk_embedding = embeddings.embed_query(chunk)
             
-            collection.add(
-                documents=[chunk],
-                embeddings=[chunk_embedding],
-                metadatas=[{
-                    "file_name": file.filename,
-                    "chunk_index": i
-                }],
-                ids=[f"{file.filename}_chunk_{i}"]
-            )
+            data_to_insert.append({
+                "id": f"{file.filename}_chunk_{i}",
+                "file_name": file.filename,
+                "chunk_index": i,
+                "content": chunk,
+                "embedding": chunk_embedding
+            })
+        
+        # Insert in batches
+        batch_size = 100
+        for i in range(0, len(data_to_insert), batch_size):
+            batch = data_to_insert[i:i + batch_size]
+            collection.insert(batch)
 
+        collection.flush()
         return {
             "status": "success",
             "message": f"Successfully processed {len(chunks)} chunks",
@@ -126,17 +170,26 @@ async def query(request: QueryRequest):
     try:
         question_embedding = embeddings.embed_query(request.question)
         
-        # Query ChromaDB for relevant documents
-        results = collection.query(
-            query_embeddings=[question_embedding],
-            where={"file_name": request.filename},
-            n_results=3
+        # Query Milvus for relevant documents
+        collection.load()
+        search_params = {
+            "metric_type": "COSINE",
+            "params": {"nprobe": 10}
+        }
+        
+        results = collection.search(
+            data=[question_embedding],
+            anns_field="embedding",
+            param=search_params,
+            limit=3,
+            expr=f'file_name == "{request.filename}"',
+            output_fields=["content"]
         )
         
-        if not results['documents'][0]:
+        if not results or len(results[0]) == 0:
             raise HTTPException(status_code=404, detail="No relevant documents found")
             
-        context = "\n\n".join(results['documents'][0])
+        context = "\n\n".join([hit.entity.get('content') for hit in results[0]])
 
         # Create prompt
         prompt = request.custom_prompt if request.custom_prompt else f"""
@@ -156,13 +209,7 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-class CompareRequest(BaseModel):
-    teacher_file: str
-    student_file: str
-    question: str | None = None
-    custom_prompt: str | None = None
-        
+
 @app.post("/process-file")
 async def process_file(file: UploadFile, is_teacher: bool = True):
     try:
@@ -181,17 +228,28 @@ async def process_file(file: UploadFile, is_teacher: bool = True):
             )
             chunks = text_splitter.split_text(text_content)
             
+            # Process chunks and store in Milvus
+            collection.load()
+            data_to_insert = []
+            
             for i, chunk in enumerate(chunks):
                 chunk_embedding = embeddings.embed_query(chunk)
-                collection.add(
-                    documents=[chunk],
-                    embeddings=[chunk_embedding],
-                    metadatas=[{
-                        "file_name": file.filename,
-                        "chunk_index": i
-                    }],
-                    ids=[f"{file.filename}_chunk_{i}"]
-                )
+                
+                data_to_insert.append({
+                    "id": f"{file.filename}_chunk_{i}",
+                    "file_name": file.filename,
+                    "chunk_index": i,
+                    "content": chunk,
+                    "embedding": chunk_embedding
+                })
+            
+            # Insert in batches
+            batch_size = 100
+            for i in range(0, len(data_to_insert), batch_size):
+                batch = data_to_insert[i:i + batch_size]
+                collection.insert(batch)
+
+            collection.flush()
         
         return {
             "status": "success",
