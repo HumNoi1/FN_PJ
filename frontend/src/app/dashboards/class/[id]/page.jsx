@@ -18,14 +18,6 @@ const ClassDetail = () => {
   const [studentFiles, setStudentFiles] = useState([]);
   const [uploadingTeacher, setUploadingTeacher] = useState(false);
   const [uploadingStudent, setUploadingStudent] = useState(false);
-
-  // Function for Compare PDF
-  const [selectedTeacherFile, setSelectedTeacherFile] = useState(null);
-  const [selectedStudentFile, setSelectStudentFile] = useState(null);
-  const [comparisonResult, setComparisonResult] = useState('');
-  const [isComparing, setIsComparing] = useState(false);
-  
-  // Function for RAG and Chat
   const [selectedFile, setSelectedFile] = useState(null);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -347,52 +339,14 @@ const ClassDetail = () => {
 
   return (
     <div className="flex min-h-screen bg-slate-900">
-    <Nav />
-    <main className="flex-1 p-8">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <header className="flex items-center justify-between">
-          <Link 
-            href="/dashboards" 
-            className="inline-flex items-center px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors rounded-lg hover:bg-slate-800"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Link>
-        </header>
-
-        {/* Error Alert */}
-        {error && (
-          <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400">
-            {error}
-          </div>
-        )}
-
-        {/* Class Info Card */}
-        <section className="bg-slate-800 rounded-xl p-8 shadow-lg">
-          <h1 className="text-4xl font-bold text-white mb-8">
-            {classData?.name}
-          </h1>
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="space-y-2">
-              <h2 className="text-lg font-medium text-slate-400">Term</h2>
-              <p className="text-2xl text-white">{classData?.term}</p>
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-medium text-slate-400">Subject</h2>
-              <p className="text-2xl text-white">{classData?.subject}</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Main Content Grid */}
-        <div className="grid lg:grid-cols-12 gap-8">
-          {/* Upload Sections */}
-          <aside className="lg:col-span-4 space-y-8">
-            {/* Teacher Upload */}
-            <section className="bg-slate-800 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-6">Teacher Uploads</h2>
-              <label className="block w-full p-4 border-2 border-dashed border-slate-600 rounded-xl hover:border-blue-500 transition-all duration-200 cursor-pointer group">
+      <Nav />
+      <main className="flex-1 p-4">
+        <div className="grid grid-cols-12 gap-4 h-full">
+          {/* Left Column - Teacher Files */}
+          <div className="col-span-3 space-y-4">
+            <section className="bg-slate-800 rounded-lg p-4">
+              <h2 className="text-lg font-semibold text-white mb-4">Teacher Files</h2>
+              <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-all cursor-pointer group mb-4">
                 <input
                   type="file"
                   onChange={handleTeacherUpload}
@@ -400,58 +354,21 @@ const ClassDetail = () => {
                   className="hidden"
                 />
                 <div className="flex flex-col items-center justify-center space-y-2 text-slate-400 group-hover:text-blue-500">
-                  <Upload className="w-8 h-8" />
-                  <span>{uploadingTeacher ? 'Uploading...' : 'Upload Teacher File'}</span>
+                  <Upload className="w-6 h-6" />
+                  <span className="text-sm">{uploadingTeacher ? 'Uploading...' : 'Upload File'}</span>
                 </div>
               </label>
-            </section>
-
-            {/* Student Upload */}
-            <section className="bg-slate-800 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-6">Student Uploads</h2>
-              <label className="block w-full p-4 border-2 border-dashed border-slate-600 rounded-xl hover:border-blue-500 transition-all duration-200 cursor-pointer group">
-                <input
-                  type="file"
-                  onChange={handleStudentUpload}
-                  disabled={uploadingStudent}
-                  className="hidden"
-                />
-                <div className="flex flex-col items-center justify-center space-y-2 text-slate-400 group-hover:text-blue-500">
-                  <Upload className="w-8 h-8" />
-                  <span>{uploadingStudent ? 'Uploading...' : 'Upload Student File'}</span>
-                </div>
-              </label>
-            </section>
-          </aside>
-
-          {/* Files Display */}
-          <div className="lg:col-span-8 space-y-8">
-            {/* Teacher Files */}
-            <section className="bg-slate-800 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-6 flex items-center">
-                <FileText className="w-6 h-6 mr-3" />
-                Teacher Files
-              </h2>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {teacherFiles.map((file) => (
-                  <div key={file?.id || file?.name} className="flex items-center justify-between p-4 bg-slate-700/50 rounded-lg hover:bg-slate-700 transition-colors">
-                    <div className="flex items-center space-x-4 flex-1 min-w-0">
-                      <a
-                        href={getFileUrl(file?.name, true)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-white hover:text-blue-400 truncate"
-                      >
+                  <div key={file?.name} className="flex items-center justify-between p-2 bg-slate-700/50 rounded-lg text-sm">
+                    <div className="flex items-center space-x-2 flex-1 min-w-0">
+                      <a href={getFileUrl(file?.name, true)} className="text-white hover:text-blue-400 truncate">
                         {file?.name}
                       </a>
-                      {file?.name && file.name.toLowerCase().endsWith('.pdf') && (
+                      {file?.name?.toLowerCase().endsWith('.pdf') && (
                         <button
                           onClick={() => handleFileSelect(file)}
-                          className={`p-2 text-slate-400 hover:text-blue-400 transition-colors &{
-                            selectedFile?.name === file.name
-                              ? 'bg-blue-500 text-white'
-                              : 'bg-slate-700' 
-                            }`}
+                          className="p-1 text-slate-400 hover:text-blue-400"
                         >
                           <MessageCircle className="w-4 h-4" />
                         </button>
@@ -459,155 +376,103 @@ const ClassDetail = () => {
                     </div>
                     <button
                       onClick={() => handleDeleteFile(file?.name, true)}
-                      className="p-2 text-slate-400 hover:text-red-400 transition-colors"
+                      className="p-1 text-slate-400 hover:text-red-400"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
-                {teacherFiles.length === 0 && (
-                  <p className="text-slate-400 text-center py-8">No teacher files uploaded yet</p>
-                )}
               </div>
             </section>
+          </div>
 
-            {/* Student Files */}
-            <section className="bg-slate-800 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-6 flex items-center">
-                <FileText className="w-6 h-6 mr-3" />
-                Student Files
-              </h2>
-              <div className="space-y-3">
-                {studentFiles?.map((file) => (
-                  <div key={file?.id || file?.name} className="flex items-center justify-between p-4 bg-slate-700/50 rounded-lg hover:bg-slate-700 transition-colors">
-                    <a
-                      href={getFileUrl(file?.name, false)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-white hover:text-blue-400 truncate"
-                    >
-                      {file?.name}
-                    </a>
-                    <button
-                      onClick={() => handleDeleteFile(file?.name, false)}
-                      className="p-2 text-slate-400 hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-                {!studentFiles?.length && (
-                  <p className="text-slate-400 text-center py-8">No student files uploaded yet</p>
+          {/* Middle Column - Chat */}
+          <div className="col-span-6 space-y-4">
+            <section className="bg-slate-800 rounded-lg p-4 h-full">
+              <div className="flex flex-col h-full">
+                <h2 className="text-lg font-semibold text-white mb-4">
+                  {selectedFile ? `Chat about ${selectedFile.name}` : 'Select a file to start chatting'}
+                </h2>
+                
+                {selectedFile && (
+                  <>
+                    <div className="flex-1 mb-4 overflow-auto">
+                      {answer && (
+                        <div className="p-4 bg-slate-700 rounded-lg mb-4">
+                          <div className="text-white whitespace-pre-wrap">{answer}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      <textarea
+                        value={customPrompt}
+                        onChange={(e) => setCustomPrompt(e.target.value)}
+                        className="w-full p-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500"
+                        placeholder="Custom prompt (optional)"
+                        rows="2"
+                      />
+                      
+                      <div className="flex space-x-2">
+                        <textarea
+                          value={question}
+                          onChange={(e) => setQuestion(e.target.value)}
+                          disabled={!isDocumentsReady || isProcessing}
+                          className="flex-1 p-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500"
+                          placeholder={isProcessing ? 'Processing...' : 'Ask a question'}
+                          rows="2"
+                        />
+                        <button
+                          onClick={handleAskQuestion}
+                          disabled={isQuerying || !question.trim() || !isDocumentsReady || isProcessing}
+                          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+                        >
+                          {isQuerying ? 'Searching...' : 'Ask'}
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </section>
           </div>
-          
-          {/* RAG and Chat */}
-          {selectedFile && (
-            <section className="lg:col-span-12 bg-slate-800 rounded-xl p-6 shadow-lg">
-              <h3 className="text-xl font-bold text-white mb-6 flex items-center justify-between">
-                <span>ถามเกี่ยวกับ {selectedFile.name}</span>
-                {isProcessing && (
-                  <span className="text-sm text-blue-400">Processing...</span>
-                )}
-              </h3>
-              
-              {/*custom prompt*/}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Custom Prompt (optional)
-                </label>
-                <textarea
-                  value={customPrompt}
-                  onChange={(e) => setCustomPrompt(e.target.value)}
-                  className="w-full p-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500"
-                  placeholder='Enter a custom prompt for the model (optional)'
-                  rows="2"
+
+          {/* Right Column - Student Files */}
+          <div className="col-span-3 space-y-4">
+            <section className="bg-slate-800 rounded-lg p-4">
+              <h2 className="text-lg font-semibold text-white mb-4">Student Files</h2>
+              <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-all cursor-pointer group mb-4">
+                <input
+                  type="file"
+                  onChange={handleStudentUpload}
+                  disabled={uploadingStudent}
+                  className="hidden"
                 />
-              </div>
-
-              {/* Question Input */}
-              <div className="space-y-4">
-                <textarea
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  disabled={!isDocumentsReady || isProcessing}
-                  className="w-full p-4 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500 disabled:opacity-50"
-                  placeholder={
-                    isProcessing
-                      ? 'Please wait for processing to complete...'
-                      : !isDocumentsReady
-                        ? 'Enter your question here...'
-                        : 'Please wait for processing to complete...'
-                  }
-                  rows="4"
-                />
-              </div>
-
-              {/* Ask Question Button */}
-              <button
-                onClick={handleAskQuestion}
-                disabled={isQuerying || !question.trim() || !isDocumentsReady || isProcessing} 
-                className="mt-4 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                >
-                  {isQuerying
-                    ? 'กำลังค้นหาคำตอบ...'
-                    : isProcessing
-                      ? 'กำลังประมวลผลเอกสาร...'
-                      : 'ถามคำถาม'}
-              </button>
-
-              {/* Ask Question Button */}
-              {answer && (
-                <div className="mt-6 p-6 bg-slate-700 rounded-lg">
-                  <h4 className="teat-sm font-medium text-slate-300 mb-3">คำตอบ</h4>
-                  <div className="text-white whitespace-pre-wrap">{answer}</div>
+                <div className="flex flex-col items-center justify-center space-y-2 text-slate-400 group-hover:text-blue-500">
+                  <Upload className="w-6 h-6" />
+                  <span className="text-sm">{uploadingStudent ? 'Uploading...' : 'Upload File'}</span>
                 </div>
-              )}
-
+              </label>
+              <div className="space-y-2">
+                {studentFiles?.map((file) => (
+                  <div key={file?.name} className="flex items-center justify-between p-2 bg-slate-700/50 rounded-lg text-sm">
+                    <a href={getFileUrl(file?.name, false)} className="text-white hover:text-blue-400 truncate">
+                      {file?.name}
+                    </a>
+                    <button
+                      onClick={() => handleDeleteFile(file?.name, false)}
+                      className="p-1 text-slate-400 hover:text-red-400"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </section>
-          )}
-
-        {/* Comparison Section */}
-        {selectedTeacherFile && selectedStudentFile && (
-          <section className="lg:col-span-12 bg-slate-800 rounded-xl p-6 shadow-lg">
-            <h3 className="text-xl font-bold text-whit mb-6">
-              Compare Files
-            </h3>
-
-            <div className="flex items-center gap-4 mb-4">
-              <span className="text-slate-300">
-                Comparing: {selectedTeacherFile.name} ↔ {selectedStudentFile.name}
-              </span>
-            </div>
-
-            <button
-              onClick={handleComapre}
-              disabled={isComparing}
-              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
-            >
-              {isComparing ? 'Comparing...' : 'Compare Files'}
-            </button>
-
-            {comparisonResult && (
-              <div className="mt-6 p-6 bg-slate-700 rounded-lg">
-                <h4 className="text-sm font-medium text-slate-300 mb-3">
-                  Comparison Result
-                </h4>
-                <div className="text-white whitespace-pre-wrap">
-                  {comparisonResult}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
+          </div>
         </div>
-
-      </div>
-    </main>
-  </div>
+      </main>
+    </div>
   );
 };
 
