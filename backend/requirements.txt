@@ -12,3 +12,4 @@ torch
 transformers
 duckdb
 pymilvus
+langchain-huggingface

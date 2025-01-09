@@ -90,8 +90,8 @@ const ClassDetail = () => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('is_teacher', 'true');
-  
-      const processResponse = await fetch('http://localhost:8000/process-file', {
+
+      const processResponse = await fetch('http://localhost:8000/process-pdf', {
         method: 'POST',
         body: formData,
       });
@@ -138,8 +138,8 @@ const ClassDetail = () => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('is_teacher', 'false');
-  
-      await fetch('http://localhost:8000/process-file', {
+
+      const processResponse = await fetch('http://localhost:8000/process-pdf', {
         method: 'POST',
         body: formData,
       });

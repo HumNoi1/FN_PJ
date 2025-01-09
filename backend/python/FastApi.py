@@ -87,8 +87,9 @@ llm = LlamaCpp(
 
 # Initialize embeddings
 embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={'device': 'cuda'}
+    model_name="setu4993/LaBSE",
+    model_kwargs={'device': 'cuda'},
+    cache_folder="models"
 )
 
 class QueryRequest(BaseModel):
@@ -115,48 +116,62 @@ async def check_file_status(filename: str):
         )
 
 @app.post("/process-pdf")
-async def process_pdf(file: UploadFile):
+async def process_pdf(file: UploadFile, is_teacher: bool = True):
+    """
+    Unified endpoint for processing PDF files.
+    """
     try:
         content = await file.read()
         pdf_file = BytesIO(content)
         
+        # อ่านและแปลง PDF เป็นข้อความ
         pdf_reader = pypdf.PdfReader(pdf_file)
         text_content = ""
         for page in pdf_reader.pages:
             text_content += page.extract_text()
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
-        chunks = text_splitter.split_text(text_content)
-
-        # Process chunks and store in Milvus
-        collection.load()
-        data_to_insert = []
-        
-        for i, chunk in enumerate(chunks):
-            chunk_embedding = embeddings.embed_query(chunk)
+        # ประมวลผลเฉพาะไฟล์ของครูเท่านั้น
+        if is_teacher:
+            # แบ่งข้อความเป็น chunks
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200
+            )
+            chunks = text_splitter.split_text(text_content)
             
-            data_to_insert.append({
-                "id": f"{file.filename}_chunk_{i}",
-                "file_name": file.filename,
-                "chunk_index": i,
-                "content": chunk,
-                "embedding": chunk_embedding
-            })
-        
-        # Insert in batches
-        batch_size = 100
-        for i in range(0, len(data_to_insert), batch_size):
-            batch = data_to_insert[i:i + batch_size]
-            collection.insert(batch)
+            # โหลด collection และเตรียมการ insert
+            collection.load()
+            total_chunks = len(chunks)
+            
+            # ประมวลผลทีละ chunk เพื่อป้องกันปัญหาจำนวนแถวไม่ตรงกัน
+            for i, chunk in enumerate(chunks):
+                # สร้าง embedding สำหรับ chunk นี้
+                chunk_embedding = embeddings.embed_query(chunk)
+                
+                # Insert ข้อมูลทีละ chunk โดยให้ทุก field มีข้อมูล 1 แถว
+                collection.insert([
+                    [f"{file.filename}_chunk_{i}"],  # id
+                    [file.filename],                 # file_name
+                    [i],                            # chunk_index
+                    [chunk],                        # content
+                    [chunk_embedding]               # embedding - ส่งเป็น list 1 มิติ
+                ])
 
-        collection.flush()
+                # Flush ทุก 100 chunks เพื่อประสิทธิภาพ
+                if (i + 1) % 100 == 0:
+                    collection.flush()
+            
+            # Flush ครั้งสุดท้ายเพื่อให้แน่ใจว่าข้อมูลถูกบันทึกทั้งหมด
+            collection.flush()
+            message = f"Successfully processed {total_chunks} chunks"
+        else:
+            message = "File validated successfully"
+
         return {
             "status": "success",
-            "message": f"Successfully processed {len(chunks)} chunks",
-            "filename": file.filename
+            "message": message,
+            "filename": file.filename,
+            "is_teacher": is_teacher
         }
 
     except Exception as e:
@@ -209,60 +224,6 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/process-file")
-async def process_file(file: UploadFile, is_teacher: bool = True):
-    try:
-        content = await file.read()
-        pdf_file = BytesIO(content)
-        
-        pdf_reader = pypdf.PdfReader(pdf_file)
-        text_content = ""
-        for page in pdf_reader.pages:
-            text_content += page.extract_text()
-
-        if is_teacher:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200
-            )
-            chunks = text_splitter.split_text(text_content)
-            
-            # Process chunks and store in Milvus
-            collection.load()
-            data_to_insert = []
-            
-            for i, chunk in enumerate(chunks):
-                chunk_embedding = embeddings.embed_query(chunk)
-                
-                data_to_insert.append({
-                    "id": f"{file.filename}_chunk_{i}",
-                    "file_name": file.filename,
-                    "chunk_index": i,
-                    "content": chunk,
-                    "embedding": chunk_embedding
-                })
-            
-            # Insert in batches
-            batch_size = 100
-            for i in range(0, len(data_to_insert), batch_size):
-                batch = data_to_insert[i:i + batch_size]
-                collection.insert(batch)
-
-            collection.flush()
-        
-        return {
-            "status": "success",
-            "message": "File processed successfully",
-            "filename": file.filename,
-            "is_teacher": is_teacher
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
 
 if __name__ == "__main__":
     import uvicorn
