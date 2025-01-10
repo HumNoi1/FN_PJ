@@ -15,6 +15,7 @@ from pymilvus import (
 )
 import pypdf
 import os
+import multiprocessing
 from typing import Dict, List
 from io import BytesIO
 from pydantic import BaseModel
@@ -73,7 +74,10 @@ def create_collection():
 # Initialize collection
 collection = create_collection()
 
-# Initialize LLM
+# Calculate optimal number of threads for M2
+n_threads = min(multiprocessing.cpu_count() - 1, 8)  # Leave one core free for system processes
+
+# Initialize LLM with M2-optimized settings
 callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
 llm = LlamaCpp(
     model_path="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
@@ -81,14 +85,28 @@ llm = LlamaCpp(
     max_tokens=512,
     n_ctx=2048,
     callback_manager=callback_manager,
-    n_gpu_layers=1,
+    n_gpu_layers=32,  # Utilize Metal GPU acceleration
+    model_kwargs={
+        "n_threads": n_threads,  # Optimized thread count
+        "use_mlock": True,  # Keep model in memory
+        "use_mmap": True,  # Use memory mapping
+    },
     verbose=True,
+    f16_kv=True,  # Use half precision for key/value cache
+    suffix="\n",  # Add newline after each response
 )
 
-# Initialize embeddings
+# Initialize embeddings with M2 optimization
 embeddings = HuggingFaceEmbeddings(
     model_name="setu4993/LaBSE",
-    model_kwargs={'device': 'cuda'},
+    model_kwargs={
+        'device': 'mps',  # Use Metal Performance Shaders
+        'torch_dtype': 'float16'  # Use half precision for better performance
+    },
+    encode_kwargs={
+        'batch_size': 32,  # Adjust based on your memory
+        'normalize_embeddings': True
+    },
     cache_folder="models"
 )
 
@@ -116,62 +134,54 @@ async def check_file_status(filename: str):
         )
 
 @app.post("/process-pdf")
-async def process_pdf(file: UploadFile, is_teacher: bool = True):
-    """
-    Unified endpoint for processing PDF files.
-    """
+async def process_pdf(file: UploadFile):
     try:
         content = await file.read()
         pdf_file = BytesIO(content)
         
-        # อ่านและแปลง PDF เป็นข้อความ
         pdf_reader = pypdf.PdfReader(pdf_file)
         text_content = ""
         for page in pdf_reader.pages:
             text_content += page.extract_text()
 
-        # ประมวลผลเฉพาะไฟล์ของครูเท่านั้น
-        if is_teacher:
-            # แบ่งข้อความเป็น chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200
-            )
-            chunks = text_splitter.split_text(text_content)
-            
-            # โหลด collection และเตรียมการ insert
-            collection.load()
-            total_chunks = len(chunks)
-            
-            # ประมวลผลทีละ chunk เพื่อป้องกันปัญหาจำนวนแถวไม่ตรงกัน
-            for i, chunk in enumerate(chunks):
-                # สร้าง embedding สำหรับ chunk นี้
-                chunk_embedding = embeddings.embed_query(chunk)
-                
-                # Insert ข้อมูลทีละ chunk โดยให้ทุก field มีข้อมูล 1 แถว
-                collection.insert([
-                    [f"{file.filename}_chunk_{i}"],  # id
-                    [file.filename],                 # file_name
-                    [i],                            # chunk_index
-                    [chunk],                        # content
-                    [chunk_embedding]               # embedding - ส่งเป็น list 1 มิติ
-                ])
+        # Optimized text splitting for better performance
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
+        )
+        chunks = text_splitter.split_text(text_content)
 
-                # Flush ทุก 100 chunks เพื่อประสิทธิภาพ
-                if (i + 1) % 100 == 0:
-                    collection.flush()
-            
-            # Flush ครั้งสุดท้ายเพื่อให้แน่ใจว่าข้อมูลถูกบันทึกทั้งหมด
-            collection.flush()
-            message = f"Successfully processed {total_chunks} chunks"
-        else:
-            message = "File validated successfully"
+        # Process chunks and store in Milvus
+        collection.load()
+        data_to_insert = []
+        
+        # Batch process embeddings for better performance
+        chunk_batches = [chunks[i:i + 32] for i in range(0, len(chunks), 32)]
+        for batch in chunk_batches:
+            batch_embeddings = embeddings.embed_documents(batch)
+            for i, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
+                chunk_id = f"{file.filename}_chunk_{len(data_to_insert)}"
+                data_to_insert.append({
+                    "id": chunk_id,
+                    "file_name": file.filename,
+                    "chunk_index": len(data_to_insert),
+                    "content": chunk,
+                    "embedding": embedding
+                })
+        
+        # Insert in optimized batch size
+        batch_size = 100
+        for i in range(0, len(data_to_insert), batch_size):
+            batch = data_to_insert[i:i + batch_size]
+            collection.insert(batch)
 
+        collection.flush()
         return {
             "status": "success",
-            "message": message,
-            "filename": file.filename,
-            "is_teacher": is_teacher
+            "message": f"Successfully processed {len(chunks)} chunks",
+            "filename": file.filename
         }
 
     except Exception as e:
@@ -206,9 +216,8 @@ async def query(request: QueryRequest):
             
         context = "\n\n".join([hit.entity.get('content') for hit in results[0]])
 
-        # Create prompt
-        prompt = request.custom_prompt if request.custom_prompt else f"""
-        Use the following context to answer the question:
+        # Create prompt with clear instruction
+        prompt = request.custom_prompt if request.custom_prompt else f"""Based on the following context, provide a clear and concise answer to the question. Use only the information provided in the context.
 
         Context:
         {context}
@@ -224,6 +233,64 @@ async def query(request: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/process-file")
+async def process_file(file: UploadFile, is_teacher: bool = True):
+    try:
+        content = await file.read()
+        pdf_file = BytesIO(content)
+        
+        pdf_reader = pypdf.PdfReader(pdf_file)
+        text_content = ""
+        for page in pdf_reader.pages:
+            text_content += page.extract_text()
+
+        if is_teacher:
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+                separators=["\n\n", "\n", " ", ""]
+            )
+            chunks = text_splitter.split_text(text_content)
+            
+            # Batch process chunks for better performance
+            collection.load()
+            data_to_insert = []
+            
+            chunk_batches = [chunks[i:i + 32] for i in range(0, len(chunks), 32)]
+            for batch in chunk_batches:
+                batch_embeddings = embeddings.embed_documents(batch)
+                for i, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
+                    chunk_id = f"{file.filename}_chunk_{len(data_to_insert)}"
+                    data_to_insert.append({
+                        "id": chunk_id,
+                        "file_name": file.filename,
+                        "chunk_index": len(data_to_insert),
+                        "content": chunk,
+                        "embedding": embedding
+                    })
+            
+            # Insert in optimized batches
+            batch_size = 100
+            for i in range(0, len(data_to_insert), batch_size):
+                batch = data_to_insert[i:i + batch_size]
+                collection.insert(batch)
+
+            collection.flush()
+        
+        return {
+            "status": "success",
+            "message": "File processed successfully",
+            "filename": file.filename,
+            "is_teacher": is_teacher
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 if __name__ == "__main__":
     import uvicorn
