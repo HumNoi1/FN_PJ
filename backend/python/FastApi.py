@@ -3,221 +3,176 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_community.llms import LlamaCpp
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from pymilvus import (
-    connections,
-    utility,
-    Collection,
-    FieldSchema,
-    CollectionSchema,
-    DataType
-)
+import chromadb
 import pypdf
-import os
-import multiprocessing
-from typing import Dict, List
-from io import BytesIO
+from typing import Dict, Optional
 from pydantic import BaseModel
-from dotenv import load_dotenv
+import os
 
-# Load environment variables
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env.local'))
-
-# Initialize FastAPI
+# Initialize FastAPI and middleware
 app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Initialize ChromaDB collections for different document types
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+teacher_collection = chroma_client.get_or_create_collection(name="teacher_documents")
+student_collection = chroma_client.get_or_create_collection(name="student_documents")
 
-# Connect to Milvus
-connections.connect(
-    alias="default",
-    host=os.getenv("MILVUS_HOST", "localhost"),
-    port=os.getenv("MILVUS_PORT", "19530")
-)
-
-# Define collection schema
-dim = 384  # Dimension for all-MiniLM-L6-v2 embeddings
-collection_name = "documents"
-
-def create_collection():
-    """Create Milvus collection if it doesn't exist"""
-    if utility.has_collection(collection_name):
-        return Collection(collection_name)
-
-    fields = [
-        FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=100, is_primary=True),
-        FieldSchema(name="file_name", dtype=DataType.VARCHAR, max_length=200),
-        FieldSchema(name="chunk_index", dtype=DataType.INT64),
-        FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=10000),
-        FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim)
-    ]
-    schema = CollectionSchema(fields=fields, description="Document collection")
-    collection = Collection(name=collection_name, schema=schema)
-    
-    # Create index for vector field
-    index_params = {
-        "metric_type": "COSINE",
-        "index_type": "IVF_FLAT",
-        "params": {"nlist": 128}
-    }
-    collection.create_index(field_name="embedding", index_params=index_params)
-    return collection
-
-# Initialize collection
-collection = create_collection()
-
-# Calculate optimal number of threads for M2
-n_threads = min(multiprocessing.cpu_count() - 1, 8)  # Leave one core free for system processes
-
-# Initialize LLM with M2-optimized settings
-callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
-llm = LlamaCpp(
-    model_path="models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-    temperature=0.1,
-    max_tokens=512,
-    n_ctx=2048,
-    callback_manager=callback_manager,
-    n_gpu_layers=32,  # Utilize Metal GPU acceleration
-    model_kwargs={
-        "n_threads": n_threads,  # Optimized thread count
-        "use_mlock": True,  # Keep model in memory
-        "use_mmap": True,  # Use memory mapping
-    },
-    verbose=True,
-    f16_kv=True,  # Use half precision for key/value cache
-    suffix="\n",  # Add newline after each response
-)
-
-# Initialize embeddings with M2 optimization
+# Initialize AI components
 embeddings = HuggingFaceEmbeddings(
     model_name="setu4993/LaBSE",
-    model_kwargs={
-        'device': 'mps',  # Use Metal Performance Shaders
-        'torch_dtype': 'float16'  # Use half precision for better performance
-    },
-    encode_kwargs={
-        'batch_size': 32,  # Adjust based on your memory
-        'normalize_embeddings': True
-    },
-    cache_folder="models"
+    model_kwargs={'device': 'mps' if torch.backends.mps.is_available() else 'cpu'}
+)
+
+llm = LlamaCpp(
+    model_path="path/to/model.gguf",
+    temperature=0.1,
+    max_tokens=512,
+    n_ctx=2048
 )
 
 class QueryRequest(BaseModel):
     question: str
-    custom_prompt: str | None = None
     filename: str
+    student_filename: Optional[str] = None
+    custom_prompt: Optional[str] = None
 
-@app.get("/status/{filename}")
-async def check_file_status(filename: str):
+@app.post("/process-teacher-document")
+async def process_teacher_document(file: UploadFile):
+    """Process teacher's document with vector embeddings for later retrieval"""
     try:
-        collection.load()
-        results = collection.query(
-            expr=f'file_name == "{filename}"',
+        # 1. Extract text from PDF
+        text_content = await extract_pdf_text(file)
+        
+        # 2. Split text into chunks
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = text_splitter.split_text(text_content)
+        
+        # 3. Generate embeddings and store in ChromaDB
+        embeddings_list = embeddings.embed_documents(chunks)
+        
+        # 4. Store in teacher collection
+        teacher_collection.add(
+            documents=chunks,
+            embeddings=embeddings_list,
+            metadatas=[{"file_name": file.filename, "type": "teacher"} for _ in chunks],
+            ids=[f"{file.filename}_chunk_{i}" for i in range(len(chunks))]
+        )
+        
+        return {"status": "success", "message": "Teacher document processed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/process-student-document")
+async def process_student_document(file: UploadFile):
+    """Process student's document for comparison"""
+    try:
+        # 1. Extract text from PDF
+        text_content = await extract_pdf_text(file)
+        
+        # 2. Split and store in student collection
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks = text_splitter.split_text(text_content)
+        
+        # 3. Store in student collection
+        student_collection.add(
+            documents=chunks,
+            metadatas=[{"file_name": file.filename, "type": "student"} for _ in chunks],
+            ids=[f"{file.filename}_chunk_{i}" for i in range(len(chunks))]
+        )
+        
+        return {"status": "success", "message": "Student document processed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/compare-documents")
+async def compare_documents(request: ComparisonRequest):
+    """Compare teacher and student documents"""
+    try:
+        # 1. Retrieve documents
+        teacher_docs = teacher_collection.get(
+            where={"file_name": request.teacher_file}
+        )
+        student_docs = student_collection.get(
+            where={"file_name": request.student_file}
+        )
+
+        # 2. Generate comparison prompt
+        base_prompt = request.custom_prompt or """
+        Compare the following teacher's reference document and student's submission.
+        Provide detailed feedback on:
+        1. Content accuracy
+        2. Completeness
+        3. Understanding of concepts
+        
+        Teacher's document:
+        {teacher_content}
+        
+        Student's submission:
+        {student_content}
+        
+        Analysis:
+        """
+
+        # 3. Generate comparison using LLM
+        response = llm(base_prompt.format(
+            teacher_content="\n".join(teacher_docs['documents']),
+            student_content="\n".join(student_docs['documents'])
+        ))
+
+        return {
+            "comparison_result": response,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/status/{filename}")
+async def check_document_status(filename: str):
+    """ตรวจสอบสถานะการประมวลผลของเอกสาร"""
+    try:
+        # ตรวจสอบในทั้งสองคอลเลกชัน
+        teacher_result = teacher_collection.get(
+            where={"file_name": filename},
             limit=1
         )
+        student_result = student_collection.get(
+            where={"file_name": filename},
+            limit=1
+        )
+        
         return {
-            "is_processed": len(results) > 0,
-            "filename": filename
+            "is_processed": len(teacher_result['ids']) > 0 or len(student_result['ids']) > 0,
+            "type": "teacher" if len(teacher_result['ids']) > 0 else "student" if len(student_result['ids']) > 0 else None
         }
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error checking file status: {str(e)}"
-        )
-
-@app.post("/process-pdf")
-async def process_pdf(file: UploadFile):
-    try:
-        content = await file.read()
-        pdf_file = BytesIO(content)
-        
-        pdf_reader = pypdf.PdfReader(pdf_file)
-        text_content = ""
-        for page in pdf_reader.pages:
-            text_content += page.extract_text()
-
-        # Optimized text splitting for better performance
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            separators=["\n\n", "\n", " ", ""]
-        )
-        chunks = text_splitter.split_text(text_content)
-
-        # Process chunks and store in Milvus
-        collection.load()
-        data_to_insert = []
-        
-        # Batch process embeddings for better performance
-        chunk_batches = [chunks[i:i + 32] for i in range(0, len(chunks), 32)]
-        for batch in chunk_batches:
-            batch_embeddings = embeddings.embed_documents(batch)
-            for i, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
-                chunk_id = f"{file.filename}_chunk_{len(data_to_insert)}"
-                data_to_insert.append({
-                    "id": chunk_id,
-                    "file_name": file.filename,
-                    "chunk_index": len(data_to_insert),
-                    "content": chunk,
-                    "embedding": embedding
-                })
-        
-        # Insert in optimized batch size
-        batch_size = 100
-        for i in range(0, len(data_to_insert), batch_size):
-            batch = data_to_insert[i:i + batch_size]
-            collection.insert(batch)
-
-        collection.flush()
-        return {
-            "status": "success",
-            "message": f"Successfully processed {len(chunks)} chunks",
-            "filename": file.filename
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.post("/query")
-async def query(request: QueryRequest):
+async def query_document(request: QueryRequest):
+    """ค้นหาข้อมูลจากเอกสารโดยใช้ RAG"""
     try:
+        # 1. ค้นหาเอกสารอ้างอิงของครู
         question_embedding = embeddings.embed_query(request.question)
-        
-        # Query Milvus for relevant documents
-        collection.load()
-        search_params = {
-            "metric_type": "COSINE",
-            "params": {"nprobe": 10}
-        }
-        
-        results = collection.search(
-            data=[question_embedding],
-            anns_field="embedding",
-            param=search_params,
-            limit=3,
-            expr=f'file_name == "{request.filename}"',
-            output_fields=["content"]
+        teacher_docs = teacher_collection.query(
+            query_embeddings=[question_embedding],
+            where={"file_name": request.filename},
+            n_results=3
         )
-        
-        if not results or len(results[0]) == 0:
-            raise HTTPException(status_code=404, detail="No relevant documents found")
-            
-        context = "\n\n".join([hit.entity.get('content') for hit in results[0]])
 
-        # Create prompt with clear instruction
-        prompt = request.custom_prompt if request.custom_prompt else f"""Based on the following context, provide a clear and concise answer to the question. Use only the information provided in the context.
+        # 2. ถ้ามีการระบุไฟล์นักเรียน ให้ดึงข้อมูลมาเปรียบเทียบด้วย
+        context = "\n\n".join(teacher_docs['documents'][0])
+        if request.student_filename:
+            student_docs = student_collection.get(
+                where={"file_name": request.student_filename}
+            )
+            if student_docs['documents']:
+                context += f"\n\nStudent's document:\n{student_docs['documents'][0]}"
+
+        # 3. สร้าง prompt ตามบริบท
+        prompt = request.custom_prompt or f"""
+        Based on the following context, provide a clear and detailed answer.
+        If student's document is provided, include analysis of the student's understanding.
 
         Context:
         {context}
@@ -228,70 +183,18 @@ async def query(request: QueryRequest):
         Answer:
         """
 
+        # 4. สร้างคำตอบโดยใช้ LLM
         response = llm(prompt)
         return {"response": response.strip()}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/process-file")
-async def process_file(file: UploadFile, is_teacher: bool = True):
-    try:
-        content = await file.read()
-        pdf_file = BytesIO(content)
-        
-        pdf_reader = pypdf.PdfReader(pdf_file)
-        text_content = ""
-        for page in pdf_reader.pages:
-            text_content += page.extract_text()
-
-        if is_teacher:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                length_function=len,
-                separators=["\n\n", "\n", " ", ""]
-            )
-            chunks = text_splitter.split_text(text_content)
-            
-            # Batch process chunks for better performance
-            collection.load()
-            data_to_insert = []
-            
-            chunk_batches = [chunks[i:i + 32] for i in range(0, len(chunks), 32)]
-            for batch in chunk_batches:
-                batch_embeddings = embeddings.embed_documents(batch)
-                for i, (chunk, embedding) in enumerate(zip(batch, batch_embeddings)):
-                    chunk_id = f"{file.filename}_chunk_{len(data_to_insert)}"
-                    data_to_insert.append({
-                        "id": chunk_id,
-                        "file_name": file.filename,
-                        "chunk_index": len(data_to_insert),
-                        "content": chunk,
-                        "embedding": embedding
-                    })
-            
-            # Insert in optimized batches
-            batch_size = 100
-            for i in range(0, len(data_to_insert), batch_size):
-                batch = data_to_insert[i:i + batch_size]
-                collection.insert(batch)
-
-            collection.flush()
-        
-        return {
-            "status": "success",
-            "message": "File processed successfully",
-            "filename": file.filename,
-            "is_teacher": is_teacher
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+async def extract_pdf_text(file: UploadFile) -> str:
+    """Helper function to extract text from PDF"""
+    content = await file.read()
+    pdf_reader = pypdf.PdfReader(BytesIO(content))
+    text_content = ""
+    for page in pdf_reader.pages:
+        text_content += page.extract_text()
+    return text_content

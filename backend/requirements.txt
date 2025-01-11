@@ -11,5 +11,5 @@ sentence-transformers
 torch
 transformers
 duckdb
-pymilvus
 langchain-huggingface
+chromadb
