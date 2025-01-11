@@ -25,10 +25,6 @@ const ClassDetail = () => {
   const [isDocumentsReady, setIsDocumentsReady] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
-  const [selectedTeacherFile, setSelectedTeacherFile] = useState(null);
-  const [selectedStudentFile, setSelectedStudentFile] = useState(null);
-  const [comparisonResult, setComparisonResult] = useState('');
-  const [isComparing, setIsComparing] = useState(false);
 
   // Fetch function
   useEffect(() => {
@@ -82,7 +78,7 @@ const ClassDetail = () => {
         throw new Error('Only PDF files are supported');
       }
   
-      // อัปโหลดไฟล์ไปยัง Supabase storage
+      // Upload to Supabase storage
       const { data: uploadData, error: uploadError } = await supabase
         .storage
         .from('teacher-resources')
@@ -90,29 +86,23 @@ const ClassDetail = () => {
   
       if (uploadError) throw uploadError;
   
-      // สร้าง FormData สำหรับส่งไปยัง FastAPI
+      // Process with RAG
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('is_teacher', 'true');
   
-      // เพิ่มการแสดงรายละเอียดการตอบกลับจาก API
-      const processResponse = await fetch('http://localhost:8000/process-pdf', {
+      const processResponse = await fetch('http://localhost:8000/process-file', {
         method: 'POST',
         body: formData,
       });
   
-      // ตรวจสอบการตอบกลับอย่างละเอียด
       if (!processResponse.ok) {
-        const errorData = await processResponse.json();
-        
-        // ลบไฟล์จาก Supabase หากการประมวลผลล้มเหลว
         await supabase.storage
           .from('teacher-resources')
           .remove([`${params.id}/${file.name}`]);
-        
-        throw new Error(errorData.detail || 'Failed to process PDF');
+        throw new Error('Failed to process PDF');
       }
   
-      // อัปเดตรายการไฟล์
       const { data: files } = await supabase.storage
         .from('teacher-resources')
         .list(params.id);
@@ -120,7 +110,7 @@ const ClassDetail = () => {
       setTeacherFiles(files || []);
   
     } catch (err) {
-      console.error('Upload error details:', err);
+      console.error('Upload error:', err);
       setError(err.message);
     } finally {
       setUploadingTeacher(false);
@@ -148,8 +138,8 @@ const ClassDetail = () => {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('is_teacher', 'false');
-
-      const processResponse = await fetch('http://localhost:8000/process-pdf', {
+  
+      await fetch('http://localhost:8000/process-file', {
         method: 'POST',
         body: formData,
       });
@@ -219,14 +209,9 @@ const ClassDetail = () => {
     return data.publicUrl;
   };
 
-  const handleFileSelect = async (file, isTeacher = true) => {
+  const handleFileSelect = async (file) => {
     try {
-      if (isTeacher) {
-        setSelectedTeacherFile(file);
-        setSelectedFile(file);
-      } else {
-        setSelectedStudentFile(file);
-      }
+      setSelectedFile(file);
       setAnswer('');
       setQuestion('');
       setIsProcessing(true);
@@ -238,7 +223,7 @@ const ClassDetail = () => {
   
       if (!statusData.is_processed) {
         const { data, error } = await supabase.storage
-          .from(isTeacher ? 'teacher-resources' : 'student-submissions')
+          .from('teacher-resources')
           .download(`${params.id}/${file.name}`);
         
         if (error) throw error;
@@ -246,13 +231,10 @@ const ClassDetail = () => {
         const formData = new FormData();
         formData.append('file', new Blob([data], { type: 'application/pdf' }), file.name);
   
-        const response = await fetch(
-          isTeacher ? 'http://localhost:8000/process-teacher-document' : 'http://localhost:8000/process-student-document',
-          {
-            method: 'POST',
-            body: formData,
-          }
-        );
+        const response = await fetch('http://localhost:8000/process-pdf', {
+          method: 'POST',
+          body: formData,
+        });
   
         if (!response.ok) {
           const errorData = await response.json();
@@ -263,13 +245,8 @@ const ClassDetail = () => {
       setIsDocumentsReady(true);
     } catch (err) {
       console.error('Error processing file:', err);
-      setError(err.message || 'Failed to process file');
-      if (isTeacher) {
-        setSelectedTeacherFile(null);
-        setSelectedFile(null);
-      } else {
-        setSelectedStudentFile(null);
-      }
+      setError(err.message || 'Failed to process file for RAG');
+      setSelectedFile(null);
       setIsDocumentsReady(false);
     } finally {
       setIsProcessing(false);
@@ -277,31 +254,24 @@ const ClassDetail = () => {
   };
   
   const handleAskQuestion = async () => {
-    if (!selectedFile) {
-      setError('Please select a file to query');
+    if (!selectedFile || !question.trim()) {
+      setError('Please select a file and enter a question');
       return;
     }
   
     try {
       setIsQuerying(true);
       setError(null);
-  
-      // ดึง URL ของไฟล์นักเรียนที่เลือก (ถ้ามี)
-      const selectedStudentFile = studentFiles.find(
-        file => file.name === selectedStudentFileName
-      );
-  
+      
       const response = await fetch('http://localhost:8000/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
+        body: JSON.stringify({ 
           question: question.trim(),
-          custom_prompt: customPrompt.trim() || null,
-          filename: selectedFile.name,
-          // ส่งชื่อไฟล์นักเรียนถ้ามีการเลือก
-          student_filename: selectedStudentFile?.name || null
+          custom_prompt: customPrompt.trim(),
+          filename: selectedFile.name
         }),
       });
   
@@ -314,7 +284,7 @@ const ClassDetail = () => {
       setAnswer(data.response);
     } catch (err) {
       console.error('Error getting answer:', err);
-      setError(err.message);
+      setError(err.message || 'Failed to get answer');
     } finally {
       setIsQuerying(false);
     }
@@ -427,45 +397,22 @@ const ClassDetail = () => {
                 {selectedFile && (
                   <>
                     <div className="flex-1 mb-4 overflow-auto">
-
-                      {/* ส่วนแสดงผลลัพธ์การเปรียบเทียบ */}
-                      {comparisonResult && (
-                        <div>
-                          <h3 className="text-lg font-semibold text-white mb-2">Comparison Result</h3>
-                          <div className="text-sm text-white bg-slate-700 p-2 rounded-lg">{comparisonResult}</div>
-                        </div>
-                      )}
-                      {/* แสดงคำตอบปกติ */}
-                      {answer && !comparisonResult && (
+                      {answer && (
                         <div className="p-4 bg-slate-700 rounded-lg mb-4">
                           <div className="text-white whitespace-pre-wrap">{answer}</div>
                         </div>
                       )}
                     </div>
 
-                    {/* เพิ่มปุ่มเปรียบเทียบเอกสาร */}
-                    {selectedTeacherFile && (
-                      <div className="flex justify-end space-x-2 mb-4">
-                        <button
-                          onClick={handleCompare}
-                          disabled={isComparing}
-                          className="px-4 py-2 bg-green-500 text-white rounded-ls hover:bg-green-600 transition-colors disabled:opacity-50"
-                        >
-                          {isComparing ? 'Comparing...' : 'Compare Documents'}
-                        </button>
-                      </div>
-                    )}
-                    
-                    {/* ส่วนกรอกคำถาม */}
                     <div className="space-y-4">
                       <textarea
                         value={customPrompt}
                         onChange={(e) => setCustomPrompt(e.target.value)}
                         className="w-full p-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500"
                         placeholder="Custom prompt (optional)"
-                        rows={2}
+                        rows="2"
                       />
-
+                      
                       <div className="flex space-x-2">
                         <textarea
                           value={question}
@@ -473,14 +420,14 @@ const ClassDetail = () => {
                           disabled={!isDocumentsReady || isProcessing}
                           className="flex-1 p-3 rounded-lg bg-slate-700 text-white border border-slate-600 focus:border-blue-500"
                           placeholder={isProcessing ? 'Processing...' : 'Ask a question'}
-                          rows={2}
+                          rows="2"
                         />
                         <button
                           onClick={handleAskQuestion}
-                          disabled={!isQuerying || !question.trim() || !isDocumentsReady || isProcessing}
+                          disabled={isQuerying || !question.trim() || !isDocumentsReady || isProcessing}
                           className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
                         >
-                          {isQuerying ? 'Querying...' : 'Ask'}
+                          {isQuerying ? 'Searching...' : 'Ask'}
                         </button>
                       </div>
                     </div>
@@ -491,28 +438,37 @@ const ClassDetail = () => {
           </div>
 
           {/* Right Column - Student Files */}
-          <div className="space-y-2">
-            {studentFiles.map((file) => (
-              <div key={file?.name} className="flex item-center justufy-between p-2 bg-slate-700/50 rounded-lg text-sm">
-                <a href={getFileUrl(file?.name, false)} className="text-white hover:text-blue-400 truncate">
-                  {file?.name}
-                </a>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setSelectedStudentFile(file)}
-                    className={`p-1 ${selectedStudentFile?.name === file.name ? "text-blue" : "text-slate-400"} hover:text-blue-400`}
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteFile(file?.name, false)}
-                    className="p-1 text-slate-400 hover:text-red-400"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+          <div className="col-span-3 space-y-4">
+            <section className="bg-slate-800 rounded-lg p-4">
+              <h2 className="text-lg font-semibold text-white mb-4">Student Files</h2>
+              <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-all cursor-pointer group mb-4">
+                <input
+                  type="file"
+                  onChange={handleStudentUpload}
+                  disabled={uploadingStudent}
+                  className="hidden"
+                />
+                <div className="flex flex-col items-center justify-center space-y-2 text-slate-400 group-hover:text-blue-500">
+                  <Upload className="w-6 h-6" />
+                  <span className="text-sm">{uploadingStudent ? 'Uploading...' : 'Upload File'}</span>
                 </div>
+              </label>
+              <div className="space-y-2">
+                {studentFiles?.map((file) => (
+                  <div key={file?.name} className="flex items-center justify-between p-2 bg-slate-700/50 rounded-lg text-sm">
+                    <a href={getFileUrl(file?.name, false)} className="text-white hover:text-blue-400 truncate">
+                      {file?.name}
+                    </a>
+                    <button
+                      onClick={() => handleDeleteFile(file?.name, false)}
+                      className="p-1 text-slate-400 hover:text-red-400"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            </section>
           </div>
         </div>
       </main>
