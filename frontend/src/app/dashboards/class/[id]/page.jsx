@@ -25,6 +25,10 @@ const ClassDetail = () => {
   const [isDocumentsReady, setIsDocumentsReady] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
+  const [selectedTeacherFile, setSelectedTeacherFile] = useState(null);
+  const [selectedStudentFile, setSelectedStudentFile] = useState(null);
+  const [comparisonResult, setComparisonResult] = useState('');
+  const [isComparing, setIsComparing] = useState(false);
 
   // Fetch function
   useEffect(() => {
@@ -215,9 +219,14 @@ const ClassDetail = () => {
     return data.publicUrl;
   };
 
-  const handleFileSelect = async (file) => {
+  const handleFileSelect = async (file, isTeacher = true) => {
     try {
-      setSelectedFile(file);
+      if (isTeacher) {
+        setSelectedTeacherFile(file);
+        setSelectedFile(file);
+      } else {
+        setSelectedStudentFile(file);
+      }
       setAnswer('');
       setQuestion('');
       setIsProcessing(true);
@@ -229,7 +238,7 @@ const ClassDetail = () => {
   
       if (!statusData.is_processed) {
         const { data, error } = await supabase.storage
-          .from('teacher-resources')
+          .from(isTeacher ? 'teacher-resources' : 'student-submissions')
           .download(`${params.id}/${file.name}`);
         
         if (error) throw error;
@@ -237,10 +246,13 @@ const ClassDetail = () => {
         const formData = new FormData();
         formData.append('file', new Blob([data], { type: 'application/pdf' }), file.name);
   
-        const response = await fetch('http://localhost:8000/process-pdf', {
-          method: 'POST',
-          body: formData,
-        });
+        const response = await fetch(
+          isTeacher ? 'http://localhost:8000/process-teacher-document' : 'http://localhost:8000/process-student-document',
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
   
         if (!response.ok) {
           const errorData = await response.json();
@@ -251,8 +263,13 @@ const ClassDetail = () => {
       setIsDocumentsReady(true);
     } catch (err) {
       console.error('Error processing file:', err);
-      setError(err.message || 'Failed to process file for RAG');
-      setSelectedFile(null);
+      setError(err.message || 'Failed to process file');
+      if (isTeacher) {
+        setSelectedTeacherFile(null);
+        setSelectedFile(null);
+      } else {
+        setSelectedStudentFile(null);
+      }
       setIsDocumentsReady(false);
     } finally {
       setIsProcessing(false);
@@ -476,14 +493,14 @@ const ClassDetail = () => {
           {/* Right Column - Student Files */}
           <div className="space-y-2">
             {studentFiles.map((file) => (
-              <div key={file?.name} className="flex items-center justify-between p-2 bg-slate-700/50 rounded-lg text-sm">
+              <div key={file?.name} className="flex item-center justufy-between p-2 bg-slate-700/50 rounded-lg text-sm">
                 <a href={getFileUrl(file?.name, false)} className="text-white hover:text-blue-400 truncate">
                   {file?.name}
                 </a>
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => setSelectedStudentFiles(file)}
-                    className={`p-1 ${selectedStudentFile?.name === file.name ? "text-blue-400" : "text-slate-400"} hover:text-blue-400`}
+                    onClick={() => setSelectedStudentFile(file)}
+                    className={`p-1 ${selectedStudentFile?.name === file.name ? "text-blue" : "text-slate-400"} hover:text-blue-400`}
                   >
                     <MessageCircle className="w-4 h-4" />
                   </button>
@@ -491,6 +508,7 @@ const ClassDetail = () => {
                     onClick={() => handleDeleteFile(file?.name, false)}
                     className="p-1 text-slate-400 hover:text-red-400"
                   >
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
