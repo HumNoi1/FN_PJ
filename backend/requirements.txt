@@ -1,9 +1,9 @@
-fastapi
-uvicorn
+flask
+flask-cors
 python-multipart
 pypdf
 python-dotenv
-pydantic
+marshmallow
 chromadb
 langchain
 langchain-community
@@ -12,3 +12,4 @@ sentence-transformers
 torch
 transformers
 duckdb
+werkzeug
