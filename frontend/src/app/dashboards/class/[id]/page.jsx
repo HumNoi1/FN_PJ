@@ -16,8 +16,6 @@ const ClassDetail = () => {
   const [error, setError] = useState(null);
   const [teacherFiles, setTeacherFiles] = useState([]);
   const [studentFiles, setStudentFiles] = useState([]);
-  const [uploadingTeacher, setUploadingTeacher] = useState(false);
-  const [uploadingStudent, setUploadingStudent] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
@@ -25,6 +23,10 @@ const ClassDetail = () => {
   const [isDocumentsReady, setIsDocumentsReady] = useState(false);
   const [isQuerying, setIsQuerying] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
+
+  // File upload functions
+  const [uploadingTeacher, setUploadingTeacher] = useState(false);
+  const [uploadingStudent, setUploadingStudent] = useState(false);
 
   // Fetch function
   useEffect(() => {
@@ -68,93 +70,69 @@ const ClassDetail = () => {
     fetchData();
   }, [params.id]);
 
-  const handleTeacherUpload = async (event) => {
+  const handleFileUploads = async (event, fileType) => {
+    const isTeacher = fileType === 'teacher';
+    const uploadState = isTeacher ? setUploadingTeacher : setUploadingStudent;
+    const fileState = isTeacher ? setTeacherFiles : setStudentFiles;
+    const bucketName = isTeacher ? 'teacher-resources' : 'student-submissions';
+
     try {
-      setUploadingTeacher(true);
+      uploadState(true);
       setError(null);
       const file = event.target.files[0];
-      
+
+      // validate file ype
       if (file.type !== 'application/pdf') {
-        throw new Error('Only PDF files are supported');
+        throw new Error('Only PDF files are allowed');
       }
-  
-      // Upload to Supabase storage
-      const { data: uploadData, error: uploadError } = await supabase
+
+      // upload file to Supabase
+      const { data, uploadData, error: uploadsError } = await supabase
         .storage
-        .from('teacher-resources')
+        .from(bucketName)
         .upload(`${params.id}/${file.name}`, file);
-  
-      if (uploadError) throw uploadError;
-  
-      // Process with RAG
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('is_teacher', 'true');
-  
-      const processResponse = await fetch('http://localhost:8000/process-file', {
-        method: 'POST',
-        body: formData,
-      });
-  
-      if (!processResponse.ok) {
-        await supabase.storage
-          .from('teacher-resources')
-          .remove([`${params.id}/${file.name}`]);
-        throw new Error('Failed to process PDF');
+
+      if (uploadsError) throw uploadsError;
+
+      // check if file need RAG processing (only teacher files)
+      if (isTeacher) {
+        const statusResponse = await fetch(`http://localhost:8000/status/${file.name}`);
+        const statusData = await statusResponse.json();
+
+        // process with RAG if not already processed
+        if (!statusData.is_processed) {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('is_teacher', String(isTeacher));
+
+          const processResponse = await fetch('http://localhost:8000/process-pdf', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!processResponse.ok) {
+            // Cleanup if processing fails
+            await supabase.storage
+              .from(bucketName)
+              .remove([`${params.id}/${file.name}`]);
+
+            const errorData = await processResponse.json();
+            throw new Error(errorData.detail || 'Failed to process file');
+          }
+        }
       }
-  
+
+      // update file state
       const { data: files } = await supabase.storage
-        .from('teacher-resources')
+        .from(bucketName)
         .list(params.id);
-  
-      setTeacherFiles(files || []);
-  
+
+      fileState(files || []);
     } catch (err) {
-      console.error('Upload error:', err);
-      setError(err.message);
+      console.error('Error:', err);
+      setError(err.message || 'Failed to upload file');
     } finally {
-      setUploadingTeacher(false);
-    }
-  };
-  
-  const handleStudentUpload = async (event) => {
-    try {
-      setUploadingStudent(true);
-      const file = event.target.files[0];
-      
-      if (file.type !== 'application/pdf') {
-        throw new Error('Only PDF files are supported');
-      }
-  
-      // Upload to Supabase storage
-      const { data: uploadData, error: uploadError } = await supabase
-        .storage
-        .from('student-submissions')
-        .upload(`${params.id}/${file.name}`, file);
-  
-      if (uploadError) throw uploadError;
-  
-      // Process file without RAG
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('is_teacher', 'false');
-  
-      await fetch('http://localhost:8000/process-file', {
-        method: 'POST',
-        body: formData,
-      });
-  
-      const { data: files } = await supabase.storage
-        .from('student-submissions')
-        .list(params.id);
-      
-      setStudentFiles(files || []);
-  
-    } catch (err) {
-      console.error('Upload error:', err);
-      setError(err.message);
-    } finally {
-      setUploadingStudent(false);
+      uploadState(false);
     }
   };
 
@@ -209,6 +187,7 @@ const ClassDetail = () => {
     return data.publicUrl;
   };
 
+  // file selection handler with RAG status check
   const handleFileSelect = async (file) => {
     try {
       setSelectedFile(file);
@@ -217,35 +196,36 @@ const ClassDetail = () => {
       setIsProcessing(true);
       setIsDocumentsReady(false);
       setError(null);
-  
+
+      //check RAG status
       const statusResponse = await fetch(`http://localhost:8000/status/${file.name}`);
       const statusData = await statusResponse.json();
-  
+
       if (!statusData.is_processed) {
+        // Downloads and processes the file if not already processed
         const { data, error } = await supabase.storage
           .from('teacher-resources')
           .download(`${params.id}/${file.name}`);
-        
         if (error) throw error;
-  
+
         const formData = new FormData();
         formData.append('file', new Blob([data], { type: 'application/pdf' }), file.name);
-  
+        
         const response = await fetch('http://localhost:8000/process-pdf', {
           method: 'POST',
           body: formData,
         });
-  
+
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(errorData.detail || 'Failed to process file');
         }
       }
-      
+
       setIsDocumentsReady(true);
     } catch (err) {
-      console.error('Error processing file:', err);
-      setError(err.message || 'Failed to process file for RAG');
+      console.error('Error:', err);
+      setError(err.message || 'Failed to select file');
       setSelectedFile(null);
       setIsDocumentsReady(false);
     } finally {
@@ -349,7 +329,7 @@ const ClassDetail = () => {
               <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-all cursor-pointer group mb-4">
                 <input
                   type="file"
-                  onChange={handleTeacherUpload}
+                  onChange={(e) => handleFileUploads(e, 'teacher')}
                   disabled={uploadingTeacher}
                   className="hidden"
                 />
@@ -444,7 +424,7 @@ const ClassDetail = () => {
               <label className="block w-full p-3 border-2 border-dashed border-slate-600 rounded-lg hover:border-blue-500 transition-all cursor-pointer group mb-4">
                 <input
                   type="file"
-                  onChange={handleStudentUpload}
+                  onChange={(e) => handleFileUploads(e, 'student')}
                   disabled={uploadingStudent}
                   className="hidden"
                 />
