@@ -73,13 +73,13 @@ class SystemConfig:
             return Path(base_path).resolve()
             
         possible_paths = [
-            Path('models/Llama-3.2-3B-Instruct-Q4_K_M.gguf'),
-            Path('../models/Llama-3.2-3B-Instruct-Q4_K_M.gguf'),
-            Path('../../models/Llama-3.2-3B-Instruct-Q4_K_M.gguf'),
-            Path(os.path.expanduser('~/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf')),
+            Path('models/llama3.2-typhoon2-3b-instruct-q4_k_m.gguf'),
+            Path('../models/llama3.2-typhoon2-3b-instruct-q4_k_m.gguf'),
+            Path('../../models/llama3.2-typhoon2-3b-instruct-q4_k_m.gguf'),
+            Path(os.path.expanduser('~/models/llama3.2-typhoon2-3b-instruct-q4_k_m.gguf')),
         ]
         
-        project_model_path = Path(__file__).parent.parent / 'models' / 'Llama-3.2-3B-Instruct-Q4_K_M.gguf'
+        project_model_path = Path(__file__).parent.parent / 'models' / 'llama3.2-typhoon2-3b-instruct-q4_k_m.gguf'
         possible_paths.append(project_model_path)
         
         for path in possible_paths:
@@ -170,7 +170,7 @@ try:
     )
     
     embeddings = HuggingFaceEmbeddings(
-        model_name="setu4993/LaBSE",
+        model_name="BAAI/bge-m3",
         model_kwargs={'device': system_config.device}
     )
     
