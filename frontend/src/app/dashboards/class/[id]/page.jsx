@@ -43,39 +43,51 @@ const DocumentComparisonPage = () => {
 
   // ฟังก์ชันการประเมิน
   const handleEvaluate = async () => {
-    if (!selectedTeacherFile || selectedStudentFiles.length === 0 || !question) {
-      alert('กรุณาเลือกไฟล์และกรอกคำถามให้ครบถ้วน');
-      return;
-    }
-
     setIsLoading(true);
     try {
-      const evaluationPromises = selectedStudentFiles.map(async (studentFile) => {
-        const response = await fetch('/api/evaluate-answer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question,
-            student_file_id: studentFile.id,
-            teacher_file_id: selectedTeacherFile.id
-          }),
-        });
-        return { studentFile, result: await response.json() };
-      });
-
-      const results = await Promise.all(evaluationPromises);
-      const newEvaluations = {};
-      results.forEach(({ studentFile, result }) => {
-        if (result.success) {
-          newEvaluations[studentFile.id] = result.evaluation;
+      const payload = {
+        question,
+        student_file_id: selectedStudentFiles[0].id,
+        teacher_file_ids: [selectedTeacherFile.id],
+        evaluation_criteria: {
+          "ความถูกต้องของเนื้อหา": 40,
+          "ความครบถ้วนของคำตอบ": 30,
+          "การอ้างอิงแนวคิดสำคัญ": 20,
+          "การเรียบเรียงเนื้อหา": 10
         }
+      };
+  
+      console.log('Sending evaluation request with payload:', payload);
+  
+      const response = await fetch('/api/evaluation/evaluate-answer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
       });
-      setEvaluations(newEvaluations);
+  
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+  
+      const result = await response.json();
+      if (result.success) {
+        setEvaluations(prev => ({
+          ...prev,
+          [selectedStudentFiles[0].id]: result.evaluation
+        }));
+      } else {
+        throw new Error(result.error);
+      }
+  
     } catch (error) {
-      console.error('Error evaluating:', error);
-      alert('เกิดข้อผิดพลาดในการประเมิน');
+      console.error('Evaluation error:', error);
+      alert(`เกิดข้อผิดพลาดในการประเมิน: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   // แสดงผลการประเมินสำหรับนักเรียนแต่ละคน

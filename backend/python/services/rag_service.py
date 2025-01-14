@@ -1,52 +1,26 @@
 # services/rag_service.py
-from typing import List, Dict, Any
-import numpy as np
+from typing import Dict, List, Any, Optional
 from .embedding_service import EmbeddingService
 
 class RAGService:
     def __init__(self, embedding_service: EmbeddingService, llm):
+        """
+        สร้าง RAGService สำหรับการประเมินคำตอบโดยใช้ LLM และ embedding service
+        
+        Parameters:
+            embedding_service: บริการสำหรับการสร้างและค้นหา embeddings
+            llm: โมเดลภาษาที่ใช้ในการประเมินคำตอบ
+        """
         self.embedding_service = embedding_service
         self.llm = llm
-        
-    async def prepare_reference_material(self, teacher_file_ids: List[str]) -> Dict[str, Any]:
-        """
-        เตรียมข้อมูลอ้างอิงจากไฟล์ของอาจารย์
-        """
-        try:
-            # ดึงข้อมูลที่เกี่ยวข้องจาก ChromaDB โดยใช้ file_ids
-            reference_docs = await self.embedding_service.query_documents(
-                file_ids=teacher_file_ids,
-                n_results=10  # ดึงข้อมูลที่เกี่ยวข้องมากที่สุด 10 ส่วน
-            )
-            
-            if not reference_docs['success']:
-                raise Exception("Failed to retrieve reference documents")
-                
-            # รวมข้อมูลเป็นบริบทเดียว
-            context = "\n\n".join(reference_docs['documents'])
-            
-            return {
-                "success": True,
-                "context": context,
-                "source_metadata": reference_docs['metadatas']
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
 
     async def evaluate_student_answer(self, 
                                     question: str,
-                                    student_answer: str,
-                                    reference_context: str,
+                                    student_file_id: str,
+                                    teacher_file_ids: List[str],
                                     evaluation_criteria: Dict[str, int] = None) -> Dict[str, Any]:
-        """
-        ประเมินคำตอบของนักเรียนโดยใช้ LLM เปรียบเทียบกับเอกสารอ้างอิง
-        """
         try:
-            # ถ้าไม่มีเกณฑ์การให้คะแนน ใช้เกณฑ์พื้นฐาน
+            # ตั้งค่าเกณฑ์การประเมินมาตรฐาน
             if not evaluation_criteria:
                 evaluation_criteria = {
                     "ความถูกต้องของเนื้อหา": 40,
@@ -55,10 +29,69 @@ class RAGService:
                     "การเรียบเรียงเนื้อหา": 10
                 }
 
-            # สร้าง prompt สำหรับ LLM
-            prompt = f"""คุณเป็นผู้ประเมินคำตอบ โปรดประเมินคำตอบของนักเรียนตามเกณฑ์ต่อไปนี้:
+            # ดึงคำตอบของนักเรียนโดยตรงจาก ID
+            student_response = await self.embedding_service.get_document_by_id(student_file_id)
+            if not student_response['success']:
+                raise Exception(f"ไม่สามารถดึงคำตอบของนักเรียนได้: {student_response['error']}")
 
-คำถาม: {question}
+            # ดึงเอกสารอ้างอิงของอาจารย์
+            teacher_docs = []
+            for teacher_file_id in teacher_file_ids:
+                doc_response = await self.embedding_service.get_document_by_id(teacher_file_id)
+                if doc_response['success']:
+                    teacher_docs.append(doc_response['document'])
+                else:
+                    print(f"ไม่สามารถดึงเอกสารอ้างอิง {teacher_file_id}: {doc_response['error']}")
+
+            if not teacher_docs:
+                raise Exception("ไม่สามารถดึงเอกสารอ้างอิงได้")
+
+            # สร้างบริบทการประเมิน
+            reference_context = "\n\n".join(teacher_docs)
+            student_answer = student_response['document']
+
+            # ประเมินคำตอบ
+            evaluation_result = await self._evaluate_with_llm(
+                question=question,
+                student_answer=student_answer,
+                reference_context=reference_context,
+                evaluation_criteria=evaluation_criteria
+            )
+
+            return {
+                "success": True,
+                "evaluation": evaluation_result,
+                "metadata": {
+                    "student_file_id": student_file_id,
+                    "teacher_file_ids": teacher_file_ids,
+                    "document_statistics": {
+                        "student_answer_length": len(student_answer),
+                        "reference_docs_count": len(teacher_docs),
+                        "total_reference_length": len(reference_context)
+                    }
+                }
+            }
+
+        except Exception as e:
+            print(f"Error in evaluate_student_answer: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def _evaluate_with_llm(self,
+                               question: str,
+                               student_answer: str,
+                               reference_context: str,
+                               evaluation_criteria: Dict[str, int]) -> Dict[str, Any]:
+        """
+        ใช้ LLM ในการประเมินคำตอบของนักเรียน
+        """
+        try:
+            prompt = f"""คุณเป็นผู้ประเมินคำตอบ กรุณาประเมินคำตอบของนักเรียนตามเกณฑ์ต่อไปนี้:
+
+คำถาม:
+{question}
 
 เอกสารอ้างอิง:
 {reference_context}
@@ -66,77 +99,24 @@ class RAGService:
 คำตอบของนักเรียน:
 {student_answer}
 
-เกณฑ์การให้คะแนน:
+เกณฑ์การให้คะแนน (คะแนนเต็มแต่ละด้าน):
 {', '.join([f'{k} ({v} คะแนน)' for k, v in evaluation_criteria.items()])}
 
-โปรดวิเคราะห์และให้คะแนนในแต่ละด้าน พร้อมคำอธิบายประกอบ โดยแสดงผลในรูปแบบ JSON ดังนี้:
-{
-    "scores": {
-        "ความถูกต้องของเนื้อหา": [คะแนน],
-        "ความครบถ้วนของคำตอบ": [คะแนน],
-        "การอ้างอิงแนวคิดสำคัญ": [คะแนน],
-        "การเรียบเรียงเนื้อหา": [คะแนน]
-    },
-    "total_score": [คะแนนรวม],
-    "feedback": [คำแนะนำโดยละเอียด],
-    "improvement_suggestions": [ข้อเสนอแนะในการพัฒนา]
-}"""
+กรุณาวิเคราะห์และให้คะแนนในแต่ละด้าน พร้อมคำอธิบายประกอบ"""
 
-            # ส่ง prompt ไปยัง LLM และรับผลลัพธ์
-            result = self.llm(prompt)
+            # เรียกใช้ LLM และรับผลลัพธ์
+            response = self.llm(prompt)
             
-            # แปลงผลลัพธ์เป็น JSON
+            # แปลงผลลัพธ์เป็นรูปแบบที่ต้องการ
+            if isinstance(response, dict):
+                return response
+            
+            # ถ้าผลลัพธ์เป็น string ให้แปลงเป็น dict
             import json
-            evaluation = json.loads(result)
-            
-            return {
-                "success": True,
-                "evaluation": evaluation
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-    async def batch_evaluate_answers(self, 
-                                   student_file_id: str,
-                                   teacher_file_ids: List[str],
-                                   questions: List[str]) -> Dict[str, Any]:
-        """
-        ประเมินคำตอบหลายข้อพร้อมกัน
-        """
-        try:
-            # เตรียมข้อมูลอ้างอิง
-            reference_material = await self.prepare_reference_material(teacher_file_ids)
-            if not reference_material['success']:
-                raise Exception("Failed to prepare reference material")
-
-            # ดึงคำตอบของนักเรียน
-            student_answers = await self.embedding_service.query_documents(
-                file_ids=[student_file_id]
-            )
-            if not student_answers['success']:
-                raise Exception("Failed to retrieve student answers")
-
-            # ประเมินแต่ละคำตอบ
-            evaluations = []
-            for question in questions:
-                evaluation = await self.evaluate_student_answer(
-                    question=question,
-                    student_answer=student_answers['documents'][0],  # ต้องปรับให้ตรงกับคำถาม
-                    reference_context=reference_material['context']
-                )
-                evaluations.append(evaluation)
-
-            return {
-                "success": True,
-                "evaluations": evaluations
-            }
+            try:
+                return json.loads(response)
+            except json.JSONDecodeError:
+                raise Exception("ไม่สามารถแปลงผลการประเมินเป็น JSON ได้")
 
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            raise Exception(f"เกิดข้อผิดพลาดในการประเมิน: {str(e)}")
