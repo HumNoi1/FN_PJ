@@ -12,7 +12,7 @@ CORS(app)
 def setup_services():
     # สร้าง Milvus embedding service
     embedding_service = MilvusEmbeddingService(
-        model_name="BAAI/bge-m3"  # หรือจะใช้โมเดลอื่นก็ได้
+        model_name="sentence-transformers/all-MiniLM-L6-v2"  # หรือจะใช้โมเดลอื่นก็ได้
     )
     
     # สร้าง LLM service
