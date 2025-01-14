@@ -5,7 +5,6 @@ pypdf
 python-dotenv
 pymilvus
 marshmallow
-chromadb
 langchain
 langchain-community
 llama-cpp-python
