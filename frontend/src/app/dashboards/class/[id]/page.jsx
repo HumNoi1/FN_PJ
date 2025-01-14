@@ -24,6 +24,16 @@ const DocumentComparisonPage = () => {
         setIsLoading(true);
         
         const fileRecord = await FileService.uploadFile(file, fileType);
+
+        await fetch('/api/embedding/processfile', {
+            method: 'POST',
+            headers: { 'content-Type': 'application/json' },
+            body: JSON.stringify({
+                file_url: fileRecord.url,
+                file_id: fileRecord.id,
+                file_type: fileType
+            })
+        })
         
         if (fileType === FileService.FILE_TYPES.TEACHER) {
             setTeacherFiles(prev => [...prev, fileRecord]);

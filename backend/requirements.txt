@@ -3,6 +3,7 @@ flask-cors
 python-multipart
 pypdf
 python-dotenv
+pymilvus
 marshmallow
 chromadb
 langchain
@@ -13,3 +14,4 @@ torch
 transformers
 duckdb
 werkzeug
+redis

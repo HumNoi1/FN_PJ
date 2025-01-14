@@ -48,3 +48,16 @@ async def query_documents():
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@embedding_bp.route('/check-status/<file_id>', methods=['GET'])
+async def check_file_status(file_id):
+    try:
+        result = await embedding_service.get_document_by_id(file_id)
+        return jsonify({
+            "processed": result['success']
+        })
+    except Exception as e:
+        return jsonify({
+            "processed": False,
+            "error": str(e)
+        })

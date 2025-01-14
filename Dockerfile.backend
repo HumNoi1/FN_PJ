@@ -1,0 +1,37 @@
+# Dockerfile.backend
+# Use Python 3.11 slim image
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY . .
+
+# Create models directory and download model
+RUN mkdir -p models && \
+    curl -L https://huggingface.co/TheBloke/Llama-2-13B-chat-GGUF/resolve/main/llama-2-13b-chat.Q4_K_M.gguf \
+    -o models/llama3.2-typhoon2-3b-instruct-q4_k_m.gguf
+
+# Set environment variables
+ENV FLASK_APP=main.py
+ENV FLASK_ENV=production
+ENV PYTHONUNBUFFERED=1
+
+# Expose port
+EXPOSE 5001
+
+# Start Gunicorn server
+CMD ["gunicorn", "--config", "gunicorn_config.py", "main:app"]
