@@ -14,3 +14,7 @@ transformers
 duckdb
 werkzeug
 redis
+
+numpy
+pandas
+python-dotenv
