@@ -1,10 +1,11 @@
-flask
-flask-cors
+# Existing requirements
+fastapi
+uvicorn
 python-multipart
 pypdf
 python-dotenv
-pymilvus
-marshmallow
+pydantic
+chromadb
 langchain
 langchain-community
 llama-cpp-python
@@ -12,9 +13,32 @@ sentence-transformers
 torch
 transformers
 duckdb
-werkzeug
-redis
 
-numpy
-pandas
-python-dotenv
+# Milvus and Vector DB
+pymilvus==2.3.3
+numpy>=1.21.0
+pandas>=1.3.0
+
+# Flask and Core
+flask>=2.0.0
+flask-cors>=3.0.10
+gunicorn>=20.1.0
+
+# Caching
+Flask-Caching>=2.0.0
+redis>=4.5.0
+
+# Monitoring and Tracing
+prometheus-client>=0.16.0
+opentelemetry-api>=1.18.0
+opentelemetry-sdk>=1.18.0
+opentelemetry-exporter-jaeger>=1.18.0
+opentelemetry-instrumentation-flask>=0.39b0
+
+# Async support
+aioflask>=0.4.0
+asyncio>=3.4.3
+
+# Utilities
+python-json-logger>=2.0.7
+structlog>=23.1.0

@@ -23,28 +23,43 @@ const DocumentComparisonPage = () => {
     try {
         setIsLoading(true);
         
-        const fileRecord = await FileService.uploadFile(file, fileType);
-
-        await fetch('/api/embedding/processfile', {
-            method: 'POST',
-            headers: { 'content-Type': 'application/json' },
-            body: JSON.stringify({
-                file_url: fileRecord.url,
-                file_id: fileRecord.id,
-                file_type: fileType
-            })
-        })
+        // สร้าง FormData object เพื่อส่งไฟล์
+        const formData = new FormData();
+        formData.append('file', file);
         
-        if (fileType === FileService.FILE_TYPES.TEACHER) {
-            setTeacherFiles(prev => [...prev, fileRecord]);
-        } else {
-            setStudentFiles(prev => [...prev, fileRecord]);
+        // เพิ่ม metadata ที่จำเป็น
+        const fileRecord = await FileService.uploadFile(file, fileType);
+        formData.append('document_id', fileRecord.id);
+        formData.append('file_type', fileType);
+
+        // เรียกใช้ API endpoint ใหม่
+        const response = await fetch('/api/documents/process', {
+            method: 'POST',
+            body: formData,  // ส่ง FormData แทน JSON
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        alert('ไฟล์ถูกอัปโหลดเรียบร้อยแล้ว');
+        const result = await response.json();
+
+        if (fileType === FileService.FILE_TYPES.TEACHER) {
+            setTeacherFiles(prev => [...prev, {
+                ...fileRecord,
+                vectorIds: result.data.vector_ids
+            }]);
+        } else {
+            setStudentFiles(prev => [...prev, {
+                ...fileRecord,
+                vectorIds: result.data.vector_ids
+            }]);
+        }
+
+        alert('ไฟล์ถูกอัปโหลดและประมวลผลเรียบร้อยแล้ว');
         
     } catch (error) {
-        alert(`เกิดข้อผิดพลาดในการอัปโหลด: ${error.message}`);
+        alert(`เกิดข้อผิดพลาด: ${error.message}`);
     } finally {
         setIsLoading(false);
         event.target.value = '';
