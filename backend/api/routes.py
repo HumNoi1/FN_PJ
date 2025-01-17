@@ -9,9 +9,9 @@ def register_routes(app, milvus_service, redis_client):
         redis_client: Instance ของ Redis client
     """
     # Import blueprints
-    from app.routes.document_routes import document_bp, init_routes as init_document_routes
-    from app.routes.milvus_routes import milvus_bp, init_routes as init_milvus_routes
-    from app.routes.health_routes import health_bp, init_health_routes
+    from routes.document_routes import document_bp, init_routes as init_document_routes
+    from routes.milvus_routes import milvus_bp, init_routes as init_milvus_routes
+    from routes.health_routes import health_bp, init_health_routes
 
     # Initialize routes with services
     init_document_routes(milvus_service)
