@@ -1,8 +1,8 @@
-# app/routes/milvus_routes.py
+# routes/milvus_routes.py
 from flask import Blueprint, request, jsonify
-from app.services.milvus_service import MilvusService
-from app.utils.cache import cache  # แก้ไขการ import ให้ถูกต้อง
-from app.utils.monitoring import track_operation
+from services.milvus_service import MilvusService
+from utils.cache import cache  # ปรับการ import ให้สอดคล้องกับโครงสร้างใหม่
+from utils.monitoring import track_operation
 
 # สร้าง Blueprint สำหรับจัดการ Milvus operations
 milvus_bp = Blueprint('milvus', __name__)

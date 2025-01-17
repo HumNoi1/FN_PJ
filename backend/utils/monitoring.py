@@ -32,6 +32,12 @@ ERROR_COUNT = Counter(
     ['operation', 'error_type']
 )
 
+RESPONSE_TIME = Histogram(
+    'api_response_time_seconds',
+    'Time spent processing API requests',
+    ['endpoint']
+)
+
 # ตั้งค่า OpenTelemetry tracing
 def setup_tracing(service_name: str = "milvus-service"):
     """ตั้งค่า distributed tracing"""

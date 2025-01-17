@@ -1,8 +1,8 @@
-# app/routes/document_routes.py
-import traceback
+# routes/document_routes.py
 from flask import Blueprint, request, jsonify
-from app.services.milvus_service import MilvusService
-from app.services.pdf_service import PDFProcessingService
+import traceback
+from services.milvus_service import MilvusService
+from services.pdf_service import PDFProcessingService
 import tempfile
 import os
 

@@ -1,0 +1,12 @@
+Metadata-Version: 2.2
+Name: backend
+Version: 0.1
+Requires-Dist: flask
+Requires-Dist: flask-cors
+Requires-Dist: redis
+Requires-Dist: pymilvus
+Requires-Dist: python-dotenv
+Requires-Dist: pydantic
+Requires-Dist: pytest
+Requires-Dist: pytest-asyncio
+Dynamic: requires-dist

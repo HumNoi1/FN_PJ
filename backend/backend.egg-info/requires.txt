@@ -1,0 +1,8 @@
+flask
+flask-cors
+redis
+pymilvus
+python-dotenv
+pydantic
+pytest
+pytest-asyncio

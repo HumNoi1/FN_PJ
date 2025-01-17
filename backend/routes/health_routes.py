@@ -2,17 +2,23 @@
 from flask import Blueprint, jsonify
 from datetime import datetime
 import redis
-from ..services.milvus_service import MilvusService
+from services.milvus_service import MilvusService
 from pymilvus import connections
 
+# Create a Blueprint for health check routes
 health_bp = Blueprint('health', __name__)
 
+# Initialize service instances as None
 milvus_service = None
 redis_client = None
 
 def init_health_routes(ms: MilvusService, rc: redis.Redis):
     """
-    ฟังก์ชันสำหรับเริ่มต้นค่า routes พร้อมกับ dependencies ที่จำเป็น
+    Initialize the health routes with required dependencies.
+    
+    Args:
+        ms: MilvusService instance for vector database operations
+        rc: Redis client instance for caching operations
     """
     global milvus_service, redis_client
     milvus_service = ms
@@ -20,7 +26,12 @@ def init_health_routes(ms: MilvusService, rc: redis.Redis):
 
 @health_bp.route('/health', methods=['GET'])
 def health_check():
-    """Basic health check endpoint ที่ทำงานอยู่แล้ว"""
+    """
+    Basic health check endpoint that returns service status and timestamp.
+    
+    Returns:
+        JSON response with service status and current timestamp
+    """
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -30,7 +41,13 @@ def health_check():
 @health_bp.route('/ready', methods=['GET'])
 def readiness_check():
     """
-    ตรวจสอบความพร้อมของระบบและการเชื่อมต่อกับ dependencies ทั้งหมด
+    Comprehensive readiness check that verifies all service dependencies.
+    
+    This endpoint checks the connection status of both Milvus and Redis
+    to ensure the service is fully operational.
+    
+    Returns:
+        JSON response with detailed status of each component
     """
     status = {
         "status": "healthy",
@@ -39,14 +56,14 @@ def readiness_check():
     }
     
     try:
-        # ตรวจสอบ Milvus
+        # Check Milvus connection
         if milvus_service:
             connections.get_connection_addr('default')
             status["checks"]["milvus"] = {"status": "healthy"}
         else:
             raise Exception("Milvus service not initialized")
             
-        # ตรวจสอบ Redis
+        # Check Redis connection
         if redis_client:
             redis_client.ping()
             status["checks"]["redis"] = {"status": "healthy"}
@@ -63,7 +80,10 @@ def readiness_check():
 @health_bp.route('/live', methods=['GET'])
 def liveness_check():
     """
-    ตรวจสอบว่าแอปพลิเคชันยังทำงานอยู่หรือไม่
+    Simple liveness check to verify the application is running.
+    
+    Returns:
+        JSON response indicating the service is alive with current timestamp
     """
     return jsonify({
         "status": "alive",

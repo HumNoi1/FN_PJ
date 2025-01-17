@@ -1,4 +1,7 @@
-# test_milvus.py
+# test/test_milvus.py
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.milvus_service import MilvusService
 from pymilvus import Collection, utility  # เพิ่ม imports ที่จำเป็น
