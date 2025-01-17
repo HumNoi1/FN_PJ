@@ -17,7 +17,7 @@ class AppConfig(BaseSettings):
     FLASK_APP: str = "app"
     FLASK_ENV: str = "development"
     FLASK_DEBUG: bool = True
-    FLASK_PORT: int = 5000  # เพิ่มการกำหนดค่า FLASK_PORT
+    FLASK_PORT: int = 5001  # เพิ่มการกำหนดค่า FLASK_PORT
     API_PREFIX: str = "/api/v1"
     
     # Redis Configuration

@@ -1,8 +1,9 @@
+# routes/health_routes.py
 from flask import Blueprint, jsonify
+from datetime import datetime
+import redis
 from ..services.milvus_service import MilvusService
 from pymilvus import connections
-import redis
-from datetime import datetime
 
 health_bp = Blueprint('health', __name__)
 
@@ -10,23 +11,26 @@ milvus_service = None
 redis_client = None
 
 def init_health_routes(ms: MilvusService, rc: redis.Redis):
+    """
+    ฟังก์ชันสำหรับเริ่มต้นค่า routes พร้อมกับ dependencies ที่จำเป็น
+    """
     global milvus_service, redis_client
     milvus_service = ms
     redis_client = rc
 
 @health_bp.route('/health', methods=['GET'])
-async def health_check():
-    """Basic health check endpoint"""
+def health_check():
+    """Basic health check endpoint ที่ทำงานอยู่แล้ว"""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "service": "milvus-service"
     })
 
-@health_bp.route('/health/ready', methods=['GET'])
-async def readiness_check():
+@health_bp.route('/ready', methods=['GET'])
+def readiness_check():
     """
-    Detailed health check ที่ตรวจสอบการเชื่อมต่อกับ dependencies ทั้งหมด
+    ตรวจสอบความพร้อมของระบบและการเชื่อมต่อกับ dependencies ทั้งหมด
     """
     status = {
         "status": "healthy",
@@ -34,37 +38,30 @@ async def readiness_check():
         "checks": {}
     }
     
-    # ตรวจสอบ Milvus
     try:
-        connections.get_connection_addr('default')
-        status["checks"]["milvus"] = {
-            "status": "healthy"
-        }
+        # ตรวจสอบ Milvus
+        if milvus_service:
+            connections.get_connection_addr('default')
+            status["checks"]["milvus"] = {"status": "healthy"}
+        else:
+            raise Exception("Milvus service not initialized")
+            
+        # ตรวจสอบ Redis
+        if redis_client:
+            redis_client.ping()
+            status["checks"]["redis"] = {"status": "healthy"}
+        else:
+            raise Exception("Redis client not initialized")
+            
+        return jsonify(status)
+        
     except Exception as e:
-        status["checks"]["milvus"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
         status["status"] = "unhealthy"
-    
-    # ตรวจสอบ Redis
-    try:
-        redis_client.ping()
-        status["checks"]["redis"] = {
-            "status": "healthy"
-        }
-    except Exception as e:
-        status["checks"]["redis"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
-        status["status"] = "unhealthy"
-    
-    status_code = 200 if status["status"] == "healthy" else 503
-    return jsonify(status), status_code
+        status["error"] = str(e)
+        return jsonify(status), 503
 
-@health_bp.route('/health/live', methods=['GET'])
-async def liveness_check():
+@health_bp.route('/live', methods=['GET'])
+def liveness_check():
     """
     ตรวจสอบว่าแอปพลิเคชันยังทำงานอยู่หรือไม่
     """
@@ -72,33 +69,3 @@ async def liveness_check():
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat()
     })
-
-@health_bp.route('/metrics/basic', methods=['GET'])
-async def basic_metrics():
-    """
-    ดึงข้อมูล metrics พื้นฐาน
-    """
-    try:
-        # ดึงข้อมูลจำนวน collections
-        num_collections = len(utility.list_collections())
-        
-        # ดึงข้อมูลการใช้งาน Redis
-        redis_info = redis_client.info()
-        
-        metrics = {
-            "collections_count": num_collections,
-            "redis_usage": {
-                "connected_clients": redis_info["connected_clients"],
-                "used_memory_human": redis_info["used_memory_human"],
-                "total_connections_received": redis_info["total_connections_received"]
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        
-        return jsonify(metrics)
-        
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
